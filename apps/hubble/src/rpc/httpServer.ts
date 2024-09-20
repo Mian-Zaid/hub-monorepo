@@ -26,7 +26,7 @@ import {
   SyncStatusResponse,
 } from "@farcaster/hub-nodejs";
 import { Metadata, ServerUnaryCall } from "@grpc/grpc-js";
-import fastify from "fastify";
+import fastify,{FastifyRequest,FastifyReply} from "fastify";
 import fastifyCors from "@fastify/cors";
 import { Result, err, ok } from "neverthrow";
 import { logger } from "../utils/logger.js";
@@ -63,7 +63,7 @@ export const DEFAULT_PAGE_SIZE = 1000; // Global maximum limit
 function getCallObject<M extends keyof HubServiceServer>(
   method: M,
   params: DeepPartial<FirstTemplateParamType<M>>,
-  request: fastify.FastifyRequest,
+  request: FastifyRequest,
   metadata?: Metadata,
 ): CallTypeForMethod<M> {
   statsd().increment(`httpapi.${method}`);
@@ -76,7 +76,7 @@ function getCallObject<M extends keyof HubServiceServer>(
 }
 
 // Generic handler for grpc methods's responses
-function handleResponse<M>(reply: fastify.FastifyReply, obj: StaticEncodable<M>): sendUnaryData<M> {
+function handleResponse<M>(reply: FastifyReply, obj: StaticEncodable<M>): sendUnaryData<M> {
   return (err, response) => {
     if (err) {
       reply.code(400).type("application/json").send(JSON.stringify(err));

@@ -63,7 +63,7 @@ class BufferedLogger {
   private workerThreadLoggerCallbacks: (() => void)[] = [];
 
   constructor() {
-    this.logger = pino.pino(defaultOptions);
+    this.logger = pino(defaultOptions);
     this.buffering = true;
     this.buffer = [];
   }
