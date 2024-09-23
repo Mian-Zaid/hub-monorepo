@@ -2,8 +2,8 @@
   "extends": "../../tsconfig.json",
   "compilerOptions": {
     "resolveJsonModule": true,
-    "moduleResolution": "NodeNext",
-    "module": "NodeNext",
+    "moduleResolution": "Node",
+    "module": "ES2022",
     "baseUrl": "./src",
     "outDir": "build",
     "rootDir": "src"

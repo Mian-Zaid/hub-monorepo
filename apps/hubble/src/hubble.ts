@@ -98,6 +98,7 @@ import { diagnosticReporter } from "./utils/diagnosticReport.js";
 import { startupCheck, StartupCheckStatus } from "./utils/startupCheck.js";
 import { AddressInfo } from "node:net";
 import { MeasureSyncHealthJobScheduler } from "./network/sync/syncHealthJob.js";
+import { fileURLToPath } from 'url';
 
 export type HubSubmitSource =
   | "gossip"
@@ -108,9 +109,16 @@ export type HubSubmitSource =
   | "fname-registry"
   | "sync-health";
 
+
+
+
+const __filename = fileURLToPath(import.meta.url);  
+const __dirname = path.dirname(__filename);       
+
 export const APP_VERSION = JSON.parse(
-  fs.readFileSync(path.join(new URL(".", import.meta.url).pathname, "..", "./package.json")).toString(),
+  fs.readFileSync(path.resolve(__dirname, '..', 'package.json')).toString()
 ).version;
+
 export const APP_NICKNAME = process.env["HUBBLE_NAME"] ?? "Farcaster Hub";
 
 export const SNAPSHOT_S3_UPLOAD_BUCKET = "farcaster-snapshots";
