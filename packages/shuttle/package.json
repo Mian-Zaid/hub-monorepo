@@ -36,7 +36,7 @@
     "clean": "rimraf ./dist",
     "lint": "biome format src/ --write && biome check src/ --apply",
     "lint:ci": "biome ci src/",
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles --forceExit",
+    "test": "set NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles --forceExit",
     "test:ci": "ENVIRONMENT=test NODE_OPTIONS=--experimental-vm-modules jest --ci --forceExit --coverage",
     "prepublishOnly": "yarn run build"
   },
