@@ -17,6 +17,8 @@ import {
   idRegistryABI,
   ViemLocalEip712Signer,
   makeCastRemove,
+  ServiceError,
+  MessagesResponse,
 } from "@farcaster/hub-nodejs";
 import { mnemonicToAccount, toAccount } from "viem/accounts";
 import {
@@ -30,7 +32,7 @@ import {
   toHex,
   zeroAddress,
 } from "viem";
-import { optimism } from "viem/chains";
+import { optimism, foundry, mainnet } from "viem/chains";
 import { ed25519 } from "@noble/curves/ed25519";
 import axios from "axios";
 import {
@@ -42,86 +44,200 @@ import {
   getChainId,
 } from "viem/actions";
 
+import dns from "node:dns";
+import { err } from "neverthrow";
+import { ethers } from "ethers";
+dns.setDefaultResultOrder("ipv4first");
+
 /**
  * Populate the following constants with your own values
  */
-const MNEMONIC = "<REQUIRED>";
-const OP_PROVIDER_URL = "<REQUIRED>"; // Alchemy or Infura url
+const MNEMONIC =
+  "picture angle spin winter music salon field depth sand fever mechanic reflect"; //0x0319B28efEeF6131f1bcC833eCAA86E5c9c75867 //0x0319B28efEeF6131f1bcC833eCAA86E5c9c75867
+const OP_PROVIDER_URL = "http://127.0.0.1:8545"; // Alchemy or Infura url
 const RECOVERY_ADDRESS = zeroAddress; // Optional, using the default value means the account will not be recoverable later if the mnemonic is lost
 const SIGNER_PRIVATE_KEY: Hex = zeroAddress; // Optional, using the default means a new signer will be created each time
 
 // Note: nemes is the Farcaster team's mainnet hub, which is password protected to prevent abuse. Use a 3rd party hub
 // provider like https://neynar.com/ Or, run your own mainnet hub and broadcast to it permissionlessly.
-const HUB_URL = "nemes.farcaster.xyz:2283"; // URL + Port of the Hub
+const HUB_URL = "52.91.159.222:2283"; // URL + Port of the Hub
 const HUB_USERNAME = ""; // Username for auth, leave blank if not using TLS
 const HUB_PASS = ""; // Password for auth, leave blank if not using TLS
 const USE_SSL = false; // set to true if talking to a hub that uses SSL (3rd party hosted hubs or hubs that require auth)
 const FC_NETWORK = FarcasterNetwork.MAINNET; // Network of the Hub
 
+const myFID = 818682;
+
 const CHAIN = optimism;
-const IdGateway = { abi: idGatewayABI, address: ID_GATEWAY_ADDRESS, chain: CHAIN };
-const IdContract = { abi: idRegistryABI, address: ID_REGISTRY_ADDRESS, chain: CHAIN };
-const KeyContract = { abi: keyGatewayABI, address: KEY_GATEWAY_ADDRESS, chain: CHAIN };
+const IdGateway = {
+  abi: idGatewayABI,
+  address: ID_GATEWAY_ADDRESS,
+  chain: CHAIN,
+};
+const IdContract = {
+  abi: idRegistryABI,
+  address: ID_REGISTRY_ADDRESS,
+  chain: CHAIN,
+};
+const KeyContract = {
+  abi: keyGatewayABI,
+  address: KEY_GATEWAY_ADDRESS,
+  chain: CHAIN,
+};
 
 const account = mnemonicToAccount(MNEMONIC);
+// console.log("Account is: ", account);
+
+const accountAddress = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"; //account.address; //"0x53c6dA835c777AD11159198FBe11f95E5eE6B692";
 
 const walletClient = createWalletClient({
-  account,
-  chain: optimism,
+  account: accountAddress,
+  chain: CHAIN,
   transport: http(OP_PROVIDER_URL),
 }).extend(publicActions);
 
-const hubClient = USE_SSL ? getSSLHubRpcClient(HUB_URL) : getInsecureHubRpcClient(HUB_URL);
-const metadata = HUB_USERNAME !== "" && HUB_PASS !== "" ? getAuthMetadata(HUB_USERNAME, HUB_PASS) : new Metadata();
+// console.log("Wallet client is : ", walletClient);
+const hubClient = USE_SSL
+  ? getSSLHubRpcClient(HUB_URL)
+  : getInsecureHubRpcClient(HUB_URL);
+
+const metadata =
+  HUB_USERNAME !== "" && HUB_PASS !== ""
+    ? getAuthMetadata(HUB_USERNAME, HUB_PASS)
+    : new Metadata();
+
+async function getBalanceCurlStyle(address: string): Promise<string> {
+  const url = OP_PROVIDER_URL; // Your Ethereum node URL
+  const data = {
+    jsonrpc: "2.0",
+    method: "eth_getBalance",
+    params: [address, "latest"], // "latest" for getting current balance
+    id: 1,
+  };
+
+  const request = {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(data),
+  };
+
+  try {
+    myLog("Request is:", request);
+    const response = await fetch(url, request);
+
+    // Check if the response is OK (status in the range 200-299)
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+
+    // Check for errors in the JSON-RPC response
+    if (result.error) {
+      throw new Error(`JSON-RPC error: ${result.error.message}`);
+    }
+
+    return result.result; // Balance in wei (as a string)
+  } catch (error) {
+    console.error("Error fetching balance:", error);
+    throw error; // Re-throw error for further handling
+  }
+}
+
+const testConnection = async () => {
+  try {
+    const response = await fetch(OP_PROVIDER_URL);
+    myLog("Connection successful, status:", response.status);
+  } catch (err) {
+    console.error("Connection error:", err);
+  }
+};
 
 const getOrRegisterFid = async (): Promise<number> => {
-  const balance = await getBalance(walletClient, { address: account.address });
-  const existingFid = (await readContract(walletClient, {
-    ...IdContract,
-    functionName: "idOf",
-    args: [account.address],
-  })) as bigint;
+  // testConnection();
 
-  console.log(`Using address: ${account.address} with balance: ${balance}`);
+  // getBalanceCurlStyle(accountAddress)
+  //   .then((balanceInWei) => console.log("Balance in Wei:", balanceInWei))
+  //   .catch((error) => console.error("Error:", error));
+
+  const balance = await getBalance(walletClient, { address: accountAddress });
+  myLog("Balance in wei is : ", balance);
+  myLog("Balance in Ethers is : ", ethers.formatEther(balance));
+  myLog("Wallet Address is : ", accountAddress);
+
+  var existingFid = myFID;
+  try {
+    existingFid = (await readContract(walletClient, {
+      ...IdContract,
+      functionName: "idOf",
+      args: [accountAddress],
+    })) as bigint;
+
+    myLog(
+      `Using address: ${accountAddress} with balance: ${balance} existing FiD: ${existingFid}`
+    );
+  } catch (error) {
+    myLog("Error while getting id of: ", error);
+    return existingFid;
+  }
 
   if (balance === 0n && existingFid === 0n) {
     throw new Error("No existing Fid and no funds to register an fid");
   }
 
   if (existingFid > 0n) {
-    console.log(`Using existing fid: ${existingFid}`);
+    myLog(`Using existing fid: ${existingFid}`);
     return parseInt(existingFid.toString());
   }
 
-  const price = await readContract(walletClient, {
-    ...IdGateway,
-    functionName: "price",
-  });
-
-  console.log(`Cost to rent storage: ${price}`);
-
-  if (balance < price) {
-    throw new Error(`Insufficient balance to rent storage, required: ${price}, balance: ${balance}`);
+  var price = 0n;
+  try {
+    price = await readContract(walletClient, {
+      ...IdGateway,
+      functionName: "price",
+    });
+  } catch (error) {
+    myLog(`Error while getting Price: ${error}`);
+    return existingFid;
   }
 
-  const { request: registerRequest } = await simulateContract(walletClient, {
-    ...IdGateway,
-    functionName: "register",
-    args: [RECOVERY_ADDRESS],
-    value: price,
-  });
-  const registerTxHash = await writeContract(walletClient, registerRequest);
-  console.log(`Waiting for register tx to confirm: ${registerTxHash}`);
-  const registerTxReceipt = await waitForTransactionReceipt(walletClient, { hash: registerTxHash });
-  // Now extract the FID from the logs
-  const registerLog = decodeEventLog({
-    abi: idRegistryABI,
-    data: registerTxReceipt.logs[0].data,
-    topics: registerTxReceipt.logs[0].topics,
-  });
-  // @ts-ignore
-  const fid = parseInt(registerLog.args["id"]);
-  console.log(`Registered fid: ${fid} to ${account.address}`);
+  myLog(`Cost to rent storage in wei: ${price}`);
+  myLog(`Cost to rent storage in Ethers: ${ethers.formatEther(price)}`);
+
+  if (balance < price) {
+    throw new Error(
+      `Insufficient balance to rent storage,Ethers required: ${ethers.formatEther(price)}, balance: ${ethers.formatEther(balance)}`
+    );
+  }
+
+  var fid = 0;
+  try {
+    const { request: registerRequest } = await simulateContract(walletClient, {
+      ...IdGateway,
+      functionName: "register",
+      args: [RECOVERY_ADDRESS],
+      value: price,
+    });
+    const registerTxHash = await writeContract(walletClient, registerRequest);
+    myLog(`Waiting for register tx to confirm: ${registerTxHash}`);
+    const registerTxReceipt = await waitForTransactionReceipt(walletClient, {
+      hash: registerTxHash,
+    });
+    // Now extract the FID from the logs
+    const registerLog = decodeEventLog({
+      abi: idRegistryABI,
+      data: registerTxReceipt.logs[0].data,
+      topics: registerTxReceipt.logs[0].topics,
+    });
+    // @ts-ignore
+    fid = parseInt(registerLog.args["id"]);
+    myLog(`Registered fid: ${fid} to ${accountAddress}`);
+  } catch (error) {
+    myLog("Error while registering fid: ", error);
+    return existingFid;
+  }
 
   return fid;
 };
@@ -131,18 +247,21 @@ const getOrRegisterSigner = async (fid: number) => {
     // If a private key is provided, we assume the signer is already in the key registry
     const privateKeyBytes = fromHex(SIGNER_PRIVATE_KEY, "bytes");
     const publicKeyBytes = ed25519.getPublicKey(privateKeyBytes);
-    console.log(`Using existing signer with public key: ${toHex(publicKeyBytes)}`);
+    myLog(`Using existing signer with public key: ${toHex(publicKeyBytes)}`);
     return privateKeyBytes;
   }
 
   const privateKey = ed25519.utils.randomPrivateKey();
   const publicKey = toHex(ed25519.getPublicKey(privateKey));
 
-  console.log(`Created new signer for test with private key: ${toHex(privateKey)}`);
+  myLog(`Private key is: ${privateKey}`);
+
+  myLog(`Created new signer for test with private key: ${toHex(privateKey)}`);
 
   // To add a key, we need to sign the metadata with the fid of the app we're adding the key on behalf of
   // We'll use our own fid and custody address for simplicity. This can also be a separate App specific fid.
   const localAccount = toAccount(account);
+  // myLog("localaccount: ", localAccount);
   const eip712signer = new ViemLocalEip712Signer(localAccount);
   const metadata = await eip712signer.getSignedKeyRequestMetadata({
     requestFid: BigInt(fid),
@@ -150,7 +269,11 @@ const getOrRegisterSigner = async (fid: number) => {
     deadline: BigInt(Math.floor(Date.now() / 1000) + 60 * 60), // 1 hour from now
   });
 
+  // myLog("Metadata:", metadata);
+
   const metadataHex = toHex(metadata.unwrapOr(new Uint8Array()));
+
+  // walletClient.addChain({ chain: optimism });
 
   const { request: signerAddRequest } = await simulateContract(walletClient, {
     ...KeyContract,
@@ -158,11 +281,12 @@ const getOrRegisterSigner = async (fid: number) => {
     args: [1, publicKey, 1, metadataHex], // keyType, publicKey, metadataType, metadata
   });
 
+  // myLog("signerAddRequest", signerAddRequest);
   const signerAddTxHash = await writeContract(walletClient, signerAddRequest);
-  console.log(`Waiting for signer add tx to confirm: ${signerAddTxHash}`);
+  myLog(`Waiting for signer add tx to confirm: ${signerAddTxHash}`);
   await waitForTransactionReceipt(walletClient, { hash: signerAddTxHash });
-  console.log(`Registered new signer with public key: ${publicKey}`);
-  console.log("Sleeping 30 seconds to allow hubs to pick up the signer tx");
+  myLog(`Registered new signer with public key: ${publicKey}`);
+  myLog("Sleeping 30 seconds to allow hubs to pick up the signer tx");
   await new Promise((resolve) => setTimeout(resolve, 30000));
   return privateKey;
 };
@@ -170,9 +294,11 @@ const getOrRegisterSigner = async (fid: number) => {
 const registerFname = async (fid: number) => {
   try {
     // First check if this fid already has an fname
-    const response = await axios.get(`https://fnames.farcaster.xyz/transfers/current?fid=${fid}`);
+    const response = await axios.get(
+      `https://fnames.farcaster.xyz/transfers/current?fid=${fid}`
+    );
     const fname = response.data.transfer.username;
-    console.log(`Fid ${fid} already has fname: ${fname}`);
+    myLog(`Fid ${fid} already has fname: ${fname}`);
     return fname;
   } catch (e) {
     // No username, ignore and continue with registering
@@ -181,28 +307,37 @@ const registerFname = async (fid: number) => {
   const fname = `fid-${fid}`;
   const timestamp = Math.floor(Date.now() / 1000);
   const localAccount = toAccount(account);
-  const signer = new ViemLocalEip712Signer(localAccount as LocalAccount<string>);
+  const signer = new ViemLocalEip712Signer(
+    localAccount as LocalAccount<string>
+  );
   const userNameProofSignature = signer.signUserNameProofClaim({
     name: fname,
     timestamp: BigInt(timestamp),
-    owner: account.address,
+    owner: accountAddress,
   });
 
-  console.log(`Registering fname: ${fname} to fid: ${fid}`);
+  myLog(`Registering fname: ${fname} to fid: ${fid}`);
   try {
-    const response = await axios.post("https://fnames.farcaster.xyz/transfers", {
-      name: fname, // Name to register
-      from: 0, // Fid to transfer from (0 for a new registration)
-      to: fid, // Fid to transfer to (0 to unregister)
-      fid: fid, // Fid making the request (must match from or to)
-      owner: account.address, // Custody address of fid making the request
-      timestamp: timestamp, // Current timestamp in seconds
-      signature: userNameProofSignature, // EIP-712 signature signed by the current custody address of the fid
-    });
+    const response = await axios.post(
+      "https://fnames.farcaster.xyz/transfers",
+      {
+        name: fname, // Name to register
+        from: 0, // Fid to transfer from (0 for a new registration)
+        to: fid, // Fid to transfer to (0 to unregister)
+        fid: fid, // Fid making the request (must match from or to)
+        owner: accountAddress, // Custody address of fid making the request
+        timestamp: timestamp, // Current timestamp in seconds
+        signature: userNameProofSignature, // EIP-712 signature signed by the current custody address of the fid
+      }
+    );
     return fname;
   } catch (e) {
     // @ts-ignore
-    throw new Error(`Error registering fname: ${JSON.stringify(e.response.data)} (status: ${e.response.status})`);
+    throw new Error(
+      `Error registering fname: ${JSON.stringify(e.response.data)} (status: ${
+        e.response.status
+      })`
+    );
   }
 };
 
@@ -211,41 +346,87 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
   if (result.isErr()) {
     throw new Error(`Error creating message: ${result.error}`);
   }
+  myLog("Message Created: ", result.value);
   const messageSubmitResult = await hubClient.submitMessage(result.value);
   if (messageSubmitResult.isErr()) {
-    throw new Error(`Error submitting message to hub: ${messageSubmitResult.error}`);
+    throw new Error(
+      `Error submitting message to hub: ${messageSubmitResult.error}`
+    );
   }
 };
 
 (async () => {
-  const chainId = await getChainId(walletClient);
+  // myLog("Chain id: ", await getChainId(walletClient));
+  const chainId = walletClient.chain.id; //await getChainId(walletClient);
+
+  // myLog("Wallet Client id: ", walletClient.chain.id);
 
   if (chainId !== CHAIN.id) {
     throw new Error(`Chain ID ${chainId} not supported`);
   }
 
   const fid = await getOrRegisterFid();
-  const signerPrivateKey = await getOrRegisterSigner(fid);
+  // const signerPrivateKey = await getOrRegisterSigner(fid);
   const fname = await registerFname(fid);
 
+  await getCastsByFid(fid);
+
   // Now set the fname by constructing the appropriate userDataAdd message and signing it
-  const signer = new NobleEd25519Signer(signerPrivateKey);
-  const dataOptions = {
-    fid: fid,
-    network: FC_NETWORK,
-  };
-  const userDataPfpBody = {
-    type: UserDataType.USERNAME,
-    value: fname,
-  };
-  await submitMessage(makeUserDataAdd(userDataPfpBody, dataOptions, signer));
+  // const signer = new NobleEd25519Signer(signerPrivateKey);
+  // const dataOptions = {
+  //   fid: fid,
+  //   network: FC_NETWORK,
+  // };
+  // const userDataPfpBody = {
+  //   type: UserDataType.USERNAME,
+  //   value: fname,
+  // };
+  // await submitMessage(makeUserDataAdd(userDataPfpBody, dataOptions, signer));
 
-  // Now set the PFP and display name as well
-  await submitMessage(makeUserDataAdd({ type: UserDataType.DISPLAY, value: fname }, dataOptions, signer));
-  await submitMessage(
-    makeUserDataAdd({ type: UserDataType.PFP, value: "https://i.imgur.com/yed5Zfk.gif" }, dataOptions, signer),
-  );
+  // // Now set the PFP and display name as well
+  // await submitMessage(
+  //   makeUserDataAdd(
+  //     { type: UserDataType.DISPLAY, value: fname },
+  //     dataOptions,
+  //     signer
+  //   )
+  // );
+  // await submitMessage(
+  //   makeUserDataAdd(
+  //     { type: UserDataType.PFP, value: "https://i.imgur.com/yed5Zfk.gif" },
+  //     dataOptions,
+  //     signer
+  //   )
+  // );
 
-  console.log(`Successfully set up user, view at: https://warpcast.com/${fname}`);
+  // myLog(
+  //   `Successfully set up user, view at: https://warpcast.com/${fname}`
+  // );
   hubClient.close();
 })();
+
+async function getCastsByFid(_fid: number) {
+  // Create a request object for FidRequest
+  const fidRequest = {
+    fid: _fid,
+  };
+
+  // Call the getCastsByFid method
+  var res = await hubClient.getCastsByFid(fidRequest);
+  if (res.isOk()) {
+    var messages = res.value.messages;
+    messages.forEach((message, index) => {
+      myLog(`cast ${index + 1}: `, message.data.castAddBody.text);
+    });
+  } else {
+    myLog("Error fetching Casts: ", res);
+  }
+}
+
+function myLog(log: any, data: any = null) {
+  if (data == null) {
+    console.log("\n", log, "\n");
+  } else {
+    console.log("\n", log, data, "\n");
+  }
+}
