@@ -19,6 +19,7 @@ import {
   makeCastRemove,
   ServiceError,
   MessagesResponse,
+  makeCastAdd,
 } from "@farcaster/hub-nodejs";
 import { mnemonicToAccount, toAccount } from "viem/accounts";
 import {
@@ -57,6 +58,7 @@ const MNEMONIC =
 const OP_PROVIDER_URL = "http://127.0.0.1:8545"; // Alchemy or Infura url
 const RECOVERY_ADDRESS = zeroAddress; // Optional, using the default value means the account will not be recoverable later if the mnemonic is lost
 const SIGNER_PRIVATE_KEY: Hex = zeroAddress; // Optional, using the default means a new signer will be created each time
+const ACCOUNT_KEY_PRIVATE_KEY: Hex = zeroAddress; // Optional, using the default means a new account key will be created each time
 
 // Note: nemes is the Farcaster team's mainnet hub, which is password protected to prevent abuse. Use a 3rd party hub
 // provider like https://neynar.com/ Or, run your own mainnet hub and broadcast to it permissionlessly.
@@ -88,7 +90,7 @@ const KeyContract = {
 const account = mnemonicToAccount(MNEMONIC);
 // console.log("Account is: ", account);
 
-const accountAddress = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"; //account.address; //"0x53c6dA835c777AD11159198FBe11f95E5eE6B692";
+const accountAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; //account.address; //"0x53c6dA835c777AD11159198FBe11f95E5eE6B692";
 
 const walletClient = createWalletClient({
   account: accountAddress,
@@ -106,62 +108,7 @@ const metadata =
     ? getAuthMetadata(HUB_USERNAME, HUB_PASS)
     : new Metadata();
 
-async function getBalanceCurlStyle(address: string): Promise<string> {
-  const url = OP_PROVIDER_URL; // Your Ethereum node URL
-  const data = {
-    jsonrpc: "2.0",
-    method: "eth_getBalance",
-    params: [address, "latest"], // "latest" for getting current balance
-    id: 1,
-  };
-
-  const request = {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(data),
-  };
-
-  try {
-    myLog("Request is:", request);
-    const response = await fetch(url, request);
-
-    // Check if the response is OK (status in the range 200-299)
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    const result = await response.json();
-
-    // Check for errors in the JSON-RPC response
-    if (result.error) {
-      throw new Error(`JSON-RPC error: ${result.error.message}`);
-    }
-
-    return result.result; // Balance in wei (as a string)
-  } catch (error) {
-    console.error("Error fetching balance:", error);
-    throw error; // Re-throw error for further handling
-  }
-}
-
-const testConnection = async () => {
-  try {
-    const response = await fetch(OP_PROVIDER_URL);
-    myLog("Connection successful, status:", response.status);
-  } catch (err) {
-    console.error("Connection error:", err);
-  }
-};
-
 const getOrRegisterFid = async (): Promise<number> => {
-  // testConnection();
-
-  // getBalanceCurlStyle(accountAddress)
-  //   .then((balanceInWei) => console.log("Balance in Wei:", balanceInWei))
-  //   .catch((error) => console.error("Error:", error));
-
   const balance = await getBalance(walletClient, { address: accountAddress });
   myLog("Balance in wei is : ", balance);
   myLog("Balance in Ethers is : ", ethers.formatEther(balance));
@@ -208,7 +155,9 @@ const getOrRegisterFid = async (): Promise<number> => {
 
   if (balance < price) {
     throw new Error(
-      `Insufficient balance to rent storage,Ethers required: ${ethers.formatEther(price)}, balance: ${ethers.formatEther(balance)}`
+      `Insufficient balance to rent storage,Ethers required: ${ethers.formatEther(
+        price
+      )}, balance: ${ethers.formatEther(balance)}`
     );
   }
 
@@ -260,7 +209,7 @@ const getOrRegisterSigner = async (fid: number) => {
 
   // To add a key, we need to sign the metadata with the fid of the app we're adding the key on behalf of
   // We'll use our own fid and custody address for simplicity. This can also be a separate App specific fid.
-  const localAccount = toAccount(account);
+  const localAccount = toAccount(accountAddress);
   // myLog("localaccount: ", localAccount);
   const eip712signer = new ViemLocalEip712Signer(localAccount);
   const metadata = await eip712signer.getSignedKeyRequestMetadata({
@@ -367,16 +316,78 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
 
   const fid = await getOrRegisterFid();
   // const signerPrivateKey = await getOrRegisterSigner(fid);
-  const fname = await registerFname(fid);
+  // const fname = await registerFname(fid);
 
   await getCastsByFid(fid);
 
-  // Now set the fname by constructing the appropriate userDataAdd message and signing it
+  await getCastsByFid(myFID);
+
+
+  //publish cast
+
+  const dataOptions = {
+    fid: fid,
+    network: FC_NETWORK,
+  };
+
+  const getOrRegisterAccountKey = async (fid: number) => {
+    if (ACCOUNT_KEY_PRIVATE_KEY !== zeroAddress) {
+      // If a private key is provided, we assume the account key is already in the key registry
+      const privateKeyBytes = fromHex(ACCOUNT_KEY_PRIVATE_KEY, "bytes");
+      const publicKeyBytes = ed25519.getPublicKey(privateKeyBytes);
+      return privateKeyBytes;
+    }
+
+    const privateKey = ed25519.utils.randomPrivateKey();
+    const publicKey = toHex(ed25519.getPublicKey(privateKey));
+
+    const localAccount = toAccount(accountAddress);
+
+    const eip712signer = new ViemLocalEip712Signer(
+      localAccount as LocalAccount<string>
+    );
+    // To add a key, we need to sign the metadata with the fid of the app we're adding the key on behalf of
+    // Use your personal fid, or register a separate fid for the app
+    const metadata = await eip712signer.getSignedKeyRequestMetadata({
+      requestFid: BigInt(myFID),
+      key: privateKey,
+      deadline: BigInt(Math.floor(Date.now() / 1000) + 60 * 60), // 1 hour from now
+    });
+
+    const { request: signerAddRequest } = await walletClient.simulateContract({
+      ...KeyContract,
+      functionName: "add",
+      args: [1, publicKey, 1, metadata], // keyType, publicKey, metadataType, metadata
+    });
+
+    const accountKeyAddTxHash = await walletClient.writeContract(
+      signerAddRequest
+    );
+    await walletClient.waitForTransactionReceipt({ hash: accountKeyAddTxHash });
+    // Sleeping 30 seconds to allow hubs to pick up the accountKey tx
+    await new Promise((resolve) => setTimeout(resolve, 30000));
+    return privateKey;
+  };
+
+  const accountPrivateKey = await getOrRegisterAccountKey(fid);
+  const accountKey = new NobleEd25519Signer(accountPrivateKey);
+  // Post a cast
+  await submitMessage(
+    makeCastAdd(
+      {
+        text: "Hello World!",
+        embedsDeprecated: [],
+        mentions: [],
+        mentionsPositions: [],
+        embeds: [],
+      },
+      dataOptions,
+      accountKey
+    )
+  );
+
+    // Now set the fname by constructing the appropriate userDataAdd message and signing it
   // const signer = new NobleEd25519Signer(signerPrivateKey);
-  // const dataOptions = {
-  //   fid: fid,
-  //   network: FC_NETWORK,
-  // };
   // const userDataPfpBody = {
   //   type: UserDataType.USERNAME,
   //   value: fname,
@@ -415,6 +426,7 @@ async function getCastsByFid(_fid: number) {
   var res = await hubClient.getCastsByFid(fidRequest);
   if (res.isOk()) {
     var messages = res.value.messages;
+    myLog("Number of Casts: ", messages.length);
     messages.forEach((message, index) => {
       myLog(`cast ${index + 1}: `, message.data.castAddBody.text);
     });
