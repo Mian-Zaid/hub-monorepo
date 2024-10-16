@@ -15,12 +15,14 @@ import {
   keyGatewayABI,
   ID_REGISTRY_ADDRESS,
   idRegistryABI,
-  ViemLocalEip712Signer,
   makeCastRemove,
   ServiceError,
   MessagesResponse,
   makeCastAdd,
 } from "@farcaster/hub-nodejs";
+import { ViemLocalEip712Signer } from "@farcaster/hub-web";
+import { privateKeyToAccount } from "viem/accounts";
+import * as ed from "@noble/ed25519";
 import { mnemonicToAccount, toAccount } from "viem/accounts";
 import {
   createWalletClient,
@@ -62,7 +64,7 @@ const ACCOUNT_KEY_PRIVATE_KEY: Hex = zeroAddress; // Optional, using the default
 
 // Note: nemes is the Farcaster team's mainnet hub, which is password protected to prevent abuse. Use a 3rd party hub
 // provider like https://neynar.com/ Or, run your own mainnet hub and broadcast to it permissionlessly.
-const HUB_URL = "52.91.159.222:2283"; // URL + Port of the Hub
+const HUB_URL = "3.94.116.133:2283"; // URL + Port of the Hub
 const HUB_USERNAME = ""; // Username for auth, leave blank if not using TLS
 const HUB_PASS = ""; // Password for auth, leave blank if not using TLS
 const USE_SSL = false; // set to true if talking to a hub that uses SSL (3rd party hosted hubs or hubs that require auth)
@@ -90,8 +92,9 @@ const KeyContract = {
 const account = mnemonicToAccount(MNEMONIC);
 // console.log("Account is: ", account);
 
-const accountAddress = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"; //account.address; //"0x53c6dA835c777AD11159198FBe11f95E5eE6B692";
-
+const accountAddress = "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"; //account.address; //"0x53c6dA835c777AD11159198FBe11f95E5eE6B692";
+const accountPrivateKey =
+  "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a";
 const walletClient = createWalletClient({
   account: accountAddress,
   chain: CHAIN,
@@ -203,26 +206,28 @@ const getOrRegisterSigner = async (fid: number) => {
   const privateKey = ed25519.utils.randomPrivateKey();
   const publicKey = toHex(ed25519.getPublicKey(privateKey));
 
-  myLog(`Private key is: ${privateKey}`);
-
-  myLog(`Created new signer for test with private key: ${toHex(privateKey)}`);
+  myLog(`Private key is: ${toHex(privateKey)}`);
 
   // To add a key, we need to sign the metadata with the fid of the app we're adding the key on behalf of
   // We'll use our own fid and custody address for simplicity. This can also be a separate App specific fid.
-  const localAccount = toAccount(accountAddress);
+  // const localAccount = toAccount(accountAddress);
+  const appAccount = privateKeyToAccount(accountPrivateKey);
   // myLog("localaccount: ", localAccount);
-  const eip712signer = new ViemLocalEip712Signer(localAccount);
+  const eip712signer = new ViemLocalEip712Signer(appAccount);
+
+  console.log("eip712signer: ", eip712signer);
+
   const metadata = await eip712signer.getSignedKeyRequestMetadata({
     requestFid: BigInt(fid),
-    key: fromHex(publicKey, "bytes"),
+    key: hexToUint8Array(publicKey),
     deadline: BigInt(Math.floor(Date.now() / 1000) + 60 * 60), // 1 hour from now
   });
 
-  // myLog("Metadata:", metadata);
+  myLog("Metadata:", metadata);
 
   const metadataHex = toHex(metadata.unwrapOr(new Uint8Array()));
 
-  // walletClient.addChain({ chain: optimism });
+  myLog("Metadata Hex:", metadataHex);
 
   const { request: signerAddRequest } = await simulateContract(walletClient, {
     ...KeyContract,
@@ -233,7 +238,10 @@ const getOrRegisterSigner = async (fid: number) => {
   // myLog("signerAddRequest", signerAddRequest);
   const signerAddTxHash = await writeContract(walletClient, signerAddRequest);
   myLog(`Waiting for signer add tx to confirm: ${signerAddTxHash}`);
-  await waitForTransactionReceipt(walletClient, { hash: signerAddTxHash });
+  const receipt = await waitForTransactionReceipt(walletClient, {
+    hash: signerAddTxHash,
+  });
+  myLog("Receipt: ", receipt);
   myLog(`Registered new signer with public key: ${publicKey}`);
   myLog("Sleeping 30 seconds to allow hubs to pick up the signer tx");
   await new Promise((resolve) => setTimeout(resolve, 30000));
@@ -256,9 +264,8 @@ const registerFname = async (fid: number) => {
   const fname = `fid-${fid}`;
   const timestamp = Math.floor(Date.now() / 1000);
   const localAccount = toAccount(account);
-  const signer = new ViemLocalEip712Signer(
-    localAccount as LocalAccount<string>
-  );
+  const appAccount = privateKeyToAccount(accountPrivateKey);
+  const signer = new ViemLocalEip712Signer(appAccount);
   const userNameProofSignature = signer.signUserNameProofClaim({
     name: fname,
     timestamp: BigInt(timestamp),
@@ -304,6 +311,23 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
   }
 };
 
+const hexToUint8Array = (hex: any) => {
+  // Remove the "0x" prefix if present
+  if (hex.startsWith("0x")) {
+    hex = hex.slice(2);
+  }
+
+  // Create a Uint8Array with half the length of the hex string
+  const byteArray = new Uint8Array(hex.length / 2);
+
+  // Convert hex to byte values
+  for (let i = 0; i < hex.length; i += 2) {
+    byteArray[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+
+  return byteArray;
+};
+
 (async () => {
   // myLog("Chain id: ", await getChainId(walletClient));
   const chainId = walletClient.chain.id; //await getChainId(walletClient);
@@ -315,63 +339,26 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
   }
 
   const fid = await getOrRegisterFid();
-  // const signerPrivateKey = await getOrRegisterSigner(fid);
+
+  myLog("Sleeping 30 seconds to allow hubs to pick up the new FID");
+  await new Promise((resolve) => setTimeout(resolve, 30000));
+
+  const signerPrivateKey = await getOrRegisterSigner(fid);
   // const fname = await registerFname(fid);
 
   await getCastsByFid(fid);
 
-  await getCastsByFid(myFID);
+  // Publish a cast
 
+  const signer = new NobleEd25519Signer(signerPrivateKey);
 
-  //publish cast
+  myLog("Signer is: ", signer);
 
   const dataOptions = {
     fid: fid,
     network: FC_NETWORK,
   };
 
-  const getOrRegisterAccountKey = async (fid: number) => {
-    if (ACCOUNT_KEY_PRIVATE_KEY !== zeroAddress) {
-      // If a private key is provided, we assume the account key is already in the key registry
-      const privateKeyBytes = fromHex(ACCOUNT_KEY_PRIVATE_KEY, "bytes");
-      const publicKeyBytes = ed25519.getPublicKey(privateKeyBytes);
-      return privateKeyBytes;
-    }
-
-    const privateKey = ed25519.utils.randomPrivateKey();
-    const publicKey = toHex(ed25519.getPublicKey(privateKey));
-
-    const localAccount = toAccount(accountAddress);
-
-    const eip712signer = new ViemLocalEip712Signer(
-      localAccount as LocalAccount<string>
-    );
-    // To add a key, we need to sign the metadata with the fid of the app we're adding the key on behalf of
-    // Use your personal fid, or register a separate fid for the app
-    const metadata = await eip712signer.getSignedKeyRequestMetadata({
-      requestFid: BigInt(myFID),
-      key: privateKey,
-      deadline: BigInt(Math.floor(Date.now() / 1000) + 60 * 60), // 1 hour from now
-    });
-
-    const { request: signerAddRequest } = await walletClient.simulateContract({
-      ...KeyContract,
-      functionName: "add",
-      args: [1, publicKey, 1, metadata], // keyType, publicKey, metadataType, metadata
-    });
-
-    const accountKeyAddTxHash = await walletClient.writeContract(
-      signerAddRequest
-    );
-    await walletClient.waitForTransactionReceipt({ hash: accountKeyAddTxHash });
-    // Sleeping 30 seconds to allow hubs to pick up the accountKey tx
-    await new Promise((resolve) => setTimeout(resolve, 30000));
-    return privateKey;
-  };
-
-  const accountPrivateKey = await getOrRegisterAccountKey(fid);
-  const accountKey = new NobleEd25519Signer(accountPrivateKey);
-  // Post a cast
   await submitMessage(
     makeCastAdd(
       {
@@ -382,16 +369,20 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
         embeds: [],
       },
       dataOptions,
-      accountKey
+      signer
     )
   );
 
-    // Now set the fname by constructing the appropriate userDataAdd message and signing it
-  // const signer = new NobleEd25519Signer(signerPrivateKey);
+  // await getCastsByFid(myFID);
+  // Now set the fname by constructing the appropriate userDataAdd message and signing it
+
   // const userDataPfpBody = {
   //   type: UserDataType.USERNAME,
   //   value: fname,
   // };
+
+  // myLog("userDataPfpBody is: ", userDataPfpBody);
+
   // await submitMessage(makeUserDataAdd(userDataPfpBody, dataOptions, signer));
 
   // // Now set the PFP and display name as well
@@ -413,6 +404,7 @@ const submitMessage = async (resultPromise: HubAsyncResult<Message>) => {
   // myLog(
   //   `Successfully set up user, view at: https://warpcast.com/${fname}`
   // );
+
   hubClient.close();
 })();
 
